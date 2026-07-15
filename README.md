@@ -19,6 +19,12 @@ everything on the machine healthy and up to date by itself.
   pinned version), system settings, and the scoped firewall rule — one
   **Fix problems** click (a single admin prompt) repairs all of it, including
   installing Ollama itself. There is no separate setup script to run.
+- **Firewall watch**: the Ollama app / Windows likes to add its own firewall
+  rules for `ollama.exe`, which can silently block the game server's access to
+  a perfectly healthy local model. While the chat runs, the app re-checks the
+  firewall every minute (toggleable), warns with a toast the moment access
+  breaks, and **Fix problems** deletes every foreign Ollama rule and keeps
+  exactly the one scoped rule.
 - **Self-updating**: a Scheduled Task checks daily and swaps in new versions
   silently (the update task never starts the chat — that stays a human
   decision). Pinned model/version changes ship as app updates, so the host PC

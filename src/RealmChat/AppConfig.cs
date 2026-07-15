@@ -22,6 +22,7 @@ namespace RealmChat
         public string dns_name { get; set; }          // optional: hostname that should resolve to
                                                       // this PC (validated via system DNS)
         public bool tray_hint_shown { get; set; }
+        public bool disable_firewall_watch { get; set; }   // watcher is ON by default
 
         public string releases_repo { get; set; }     // overrides for dev/testing only
         public string base_url { get; set; }

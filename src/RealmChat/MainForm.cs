@@ -28,6 +28,7 @@ namespace RealmChat
         private readonly Label[] healthRows;
         private readonly ThemedButton btnFix = new ThemedButton();
         private readonly ThemedButton btnSettings = new ThemedButton();
+        private readonly CheckBox chkFwWatch = new CheckBox { AutoSize = true };
         private readonly MutedLabel capActivity = new MutedLabel { Text = "Activity" };
         private readonly LogBox log = new LogBox();
         private readonly MutedLabel lblFooter = new MutedLabel { AutoSize = false, AutoEllipsis = true };
@@ -39,6 +40,10 @@ namespace RealmChat
         private List<HealthItem> health = new List<HealthItem>();
         private bool busy;
         private bool exiting;
+        private int pollTicks;
+        private bool fwAlerted;        // one toast per firewall incident
+        private bool fwCheckRunning;
+        private DateTime? fwPostStart; // schedules the just-after-start check
 
         public MainForm(AppConfig cfg)
         {
@@ -81,7 +86,7 @@ namespace RealmChat
             bar.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 
             capHealth.Location = new Point(17, 158);
-            healthRows = new Label[5];
+            healthRows = new Label[4];
             for (int i = 0; i < healthRows.Length; i++)
             {
                 healthRows[i] = new Label
@@ -107,6 +112,22 @@ namespace RealmChat
             btnSettings.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnSettings.Click += OnSettingsClick;
 
+            // The Ollama app likes to (re)write firewall rules behind our back,
+            // which silently cuts the game server off - so watch while running.
+            chkFwWatch.Text = "Watch the firewall while the chat runs";
+            chkFwWatch.Location = new Point(16, 256);
+            chkFwWatch.Checked = !cfg.disable_firewall_watch;
+            chkFwWatch.CheckedChanged += delegate
+            {
+                cfg.disable_firewall_watch = !chkFwWatch.Checked;
+                cfg.Save();
+                fwAlerted = false;
+                Say(chkFwWatch.Checked ? "Firewall watch on." : "Firewall watch off.");
+            };
+            tips.SetToolTip(chkFwWatch,
+                "Re-checks the firewall every minute while the chat runs and warns if an\n" +
+                "Ollama-created rule breaks the game server's access to the model.");
+
             capActivity.Location = new Point(17, 278);
             log.Location = new Point(16, 298);
             log.Size = new Size(ClientSize.Width - 32, 182);
@@ -120,7 +141,7 @@ namespace RealmChat
             Controls.AddRange(new Control[] { lblTitle, btnTheme, lblSubtitle, pill,
                 btnToggle, bar, capHealth });
             Controls.AddRange(healthRows);
-            Controls.AddRange(new Control[] { btnFix, btnSettings, capActivity, log, lblFooter });
+            Controls.AddRange(new Control[] { btnFix, btnSettings, chkFwWatch, capActivity, log, lblFooter });
 
             // Tray: state at a glance, restore on double-click, control menu.
             tray.Icon = AppIcons.Neutral;
@@ -134,7 +155,20 @@ namespace RealmChat
             menu.Items.Add("Exit (stops the chat)", null, delegate { exiting = true; Close(); });
             tray.ContextMenuStrip = menu;
 
-            poll.Tick += delegate { ReconcileState(); };
+            poll.Tick += delegate
+            {
+                ReconcileState();
+                pollTicks++;
+                bool running = state == ChatState.Ready || state == ChatState.Warming;
+                // Every minute while running - plus once shortly after start,
+                // which is exactly when Windows/the Ollama app injects rules.
+                if (running && (pollTicks % 12 == 0 ||
+                    (fwPostStart.HasValue && (DateTime.UtcNow - fwPostStart.Value).TotalSeconds >= 10)))
+                {
+                    fwPostStart = null;
+                    CheckFirewallAsync();
+                }
+            };
             poll.Start();
 
             Shown += delegate { OnOpened(); };
@@ -284,6 +318,48 @@ namespace RealmChat
             btnFix.Visible = health.Any(x => !x.Ok && x.FixFlag != null);
         }
 
+        // Firewall watcher: re-runs the deep firewall status while the chat is
+        // running, updates the health row, and alerts once per incident. The
+        // Ollama app rewriting rules is the #1 way the server silently loses
+        // access to a perfectly healthy local model.
+        private void CheckFirewallAsync()
+        {
+            if (fwCheckRunning || cfg.disable_firewall_watch) return;
+            if (state != ChatState.Ready && state != ChatState.Warming) return;
+            fwCheckRunning = true;
+            Task.Run(delegate
+            {
+                string detail;
+                bool ok;
+                try { ok = HealthCheck.FirewallStatus(cfg, out detail); }
+                catch (Exception ex) { ok = false; detail = "check failed: " + ex.Message; }
+                try
+                {
+                    BeginInvoke((Action)(delegate
+                    {
+                        fwCheckRunning = false;
+                        var row = health.FirstOrDefault(x => x.FixFlag == "firewall");
+                        if (row != null) { row.Ok = ok; row.Detail = detail; PaintHealth(); }
+                        if (!ok && !fwAlerted)
+                        {
+                            fwAlerted = true;
+                            Say("FIREWALL: " + detail);
+                            pill.SetStatus(StatusKind.Warning, "Chat running — firewall problem!");
+                            Toast.ShowFromTray(tray, "Realm chat firewall problem",
+                                detail + " Open Realm Chat and click Fix problems.", true);
+                        }
+                        else if (ok && fwAlerted)
+                        {
+                            fwAlerted = false;
+                            Say("Firewall is healthy again.");
+                            if (state == ChatState.Ready) SetState(ChatState.Ready);
+                        }
+                    }));
+                }
+                catch { fwCheckRunning = false; }
+            });
+        }
+
         // Loads the model in the background after adopting a cold server.
         private void WarmAsync()
         {
@@ -396,6 +472,7 @@ namespace RealmChat
                         if (warmed) Say("Chat is ready — the bots can talk now.");
                         else Say("Server is up; the model will load on the bots' first message.");
                         SetState(ChatState.Ready);
+                        fwPostStart = DateTime.UtcNow;   // firewall re-check shortly after start
                         busy = false;
                         bar.Active = false;
                     }));

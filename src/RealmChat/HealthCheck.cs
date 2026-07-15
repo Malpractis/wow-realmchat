@@ -51,10 +51,11 @@ namespace RealmChat
                 FixFlag = "env",
             });
 
-            // 3. Firewall rule present + enabled with the expected subnets
-            var expect = SubnetHelper.AllowedSubnets(cfg);
+            // 3. Firewall rule present + enabled with the expected subnets,
+            //    and no foreign Ollama rules (the Ollama app / Windows likes
+            //    to add its own, which can block the game server's access)
             string fwState;
-            bool fwOk = FirewallRuleOk(expect, out fwState);
+            bool fwOk = FirewallStatus(cfg, out fwState);
             items.Add(new HealthItem
             {
                 Name = "Firewall (server access)",
@@ -88,33 +89,65 @@ namespace RealmChat
             catch { return null; }
         }
 
-        // Query via PowerShell (readable unprivileged); the rule identity and
-        // spec mirror what the original setup script created.
-        private static bool FirewallRuleOk(List<string> expectSubnets, out string detail)
+        // Query via PowerShell (readable unprivileged). Verifies OUR rule
+        // (present, enabled, expected subnets) AND hunts for foreign Ollama
+        // rules: anything named *ollama* or program-bound to ollama.exe that
+        // isn't ours. The Ollama app / Windows' first-listen prompt creates
+        // those, and a Block rule among them cuts the game server off while
+        // everything still works locally. Public because the GUI's firewall
+        // watcher re-runs it while the chat is running.
+        public static bool FirewallStatus(AppConfig cfg, out string detail)
         {
+            var expectSubnets = SubnetHelper.AllowedSubnets(cfg);
             try
             {
                 string script =
-                    "$r = Get-NetFirewallRule -Name '" + Constants.FwRuleName + "' -ErrorAction SilentlyContinue; " +
-                    "if (-not $r) { 'MISSING'; exit } " +
-                    "if ($r.Enabled -ne 'True' -and $r.Enabled -ne $true) { 'DISABLED'; exit } " +
-                    "$a = ($r | Get-NetFirewallAddressFilter).RemoteAddress; " +
-                    "'OK ' + ($a -join ',')";
+                    "$ours = '" + Constants.FwRuleName + "'; " +
+                    "$r = Get-NetFirewallRule -Name $ours -ErrorAction SilentlyContinue; " +
+                    "$addr = ''; " +
+                    "if ($r) { $addr = (($r | Get-NetFirewallAddressFilter).RemoteAddress -join ',') } " +
+                    "$named = @(Get-NetFirewallRule -ErrorAction SilentlyContinue | " +
+                    "  Where-Object { $_.DisplayName -like '*ollama*' -and $_.Name -ne $ours }); " +
+                    "$prog = @(); " +
+                    "try { $prog = @(Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue | " +
+                    "  Where-Object { $_.Program -like '*ollama*' } | Get-NetFirewallRule -ErrorAction SilentlyContinue | " +
+                    "  Where-Object { $_.Name -ne $ours }) } catch {} " +
+                    "$foreign = @($named + $prog) | Sort-Object Name -Unique; " +
+                    "$blocks = @($foreign | Where-Object { \"$($_.Action)\" -eq 'Block' -and (\"$($_.Enabled)\" -eq 'True') }); " +
+                    "$state = if (-not $r) { 'MISSING' } elseif (\"$($r.Enabled)\" -ne 'True') { 'DISABLED' } else { 'OK' }; " +
+                    "$state + '|' + $addr + '|' + (@($blocks).Count) + '|' + (@($foreign).Count)";
                 string outp = RunPs(script);
-                if (outp.StartsWith("MISSING")) { detail = "rule missing"; return false; }
-                if (outp.StartsWith("DISABLED")) { detail = "rule disabled"; return false; }
-                if (outp.StartsWith("OK"))
+                var parts = outp.Split('|');
+                if (parts.Length < 4) { detail = "couldn't read firewall state"; return false; }
+
+                int blocks, foreign;
+                int.TryParse(parts[2], out blocks);
+                int.TryParse(parts[3], out foreign);
+
+                // Block rules win over allows in Windows Firewall: critical.
+                if (blocks > 0)
                 {
-                    var have = outp.Substring(2).Trim()
-                        .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(s => s.Trim()).ToList();
-                    var missing = expectSubnets.Where(s => !have.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList();
-                    if (missing.Count == 0) { detail = "allows " + string.Join(", ", have.ToArray()); return true; }
+                    detail = blocks + " BLOCKING Ollama rule(s) found (the Ollama app adds these) - Fix removes them";
+                    return false;
+                }
+                if (parts[0] == "MISSING") { detail = "rule missing"; return false; }
+                if (parts[0] == "DISABLED") { detail = "rule disabled"; return false; }
+
+                var have = parts[1].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim()).ToList();
+                var missing = expectSubnets.Where(s => !have.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList();
+                if (missing.Count > 0)
+                {
                     detail = "missing subnet(s): " + string.Join(", ", missing.ToArray());
                     return false;
                 }
-                detail = "couldn't read rule";
-                return false;
+                if (foreign > 0)
+                {
+                    detail = foreign + " extra Ollama rule(s) found - Fix keeps exactly one";
+                    return false;
+                }
+                detail = "allows " + string.Join(", ", have.ToArray());
+                return true;
             }
             catch (Exception ex)
             {
@@ -241,18 +274,31 @@ namespace RealmChat
                     {
                         var subnets = string.Join(",",
                             SubnetHelper.AllowedSubnets(cfg).Select(s => "'" + s + "'").ToArray());
+                        // Keep exactly ONE Ollama rule: delete every foreign one
+                        // (named *ollama* or program-bound to ollama.exe - the
+                        // Ollama app and Windows' first-listen prompt create
+                        // those, including Block rules that cut the server off),
+                        // then (re-)assert ours.
                         string script =
+                            "$ours = '" + Constants.FwRuleName + "'; " +
                             "$subs = @(" + subnets + "); " +
-                            "$r = Get-NetFirewallRule -Name '" + Constants.FwRuleName + "' -ErrorAction SilentlyContinue; " +
-                            "if ($r) { Set-NetFirewallRule -Name '" + Constants.FwRuleName + "' -DisplayName '" + Constants.FwDisplay + "' " +
+                            "$named = @(Get-NetFirewallRule -ErrorAction SilentlyContinue | " +
+                            "  Where-Object { $_.DisplayName -like '*ollama*' -and $_.Name -ne $ours }); " +
+                            "$prog = @(); " +
+                            "try { $prog = @(Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue | " +
+                            "  Where-Object { $_.Program -like '*ollama*' } | Get-NetFirewallRule -ErrorAction SilentlyContinue | " +
+                            "  Where-Object { $_.Name -ne $ours }) } catch {} " +
+                            "@($named + $prog) | Sort-Object Name -Unique | Remove-NetFirewallRule -ErrorAction SilentlyContinue; " +
+                            "$r = Get-NetFirewallRule -Name $ours -ErrorAction SilentlyContinue; " +
+                            "if ($r) { Set-NetFirewallRule -Name $ours -DisplayName '" + Constants.FwDisplay + "' " +
                             "-Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol TCP " +
                             "-LocalPort " + Constants.DefaultPort + " -RemoteAddress $subs } " +
-                            "else { New-NetFirewallRule -Name '" + Constants.FwRuleName + "' -DisplayName '" + Constants.FwDisplay + "' " +
+                            "else { New-NetFirewallRule -Name $ours -DisplayName '" + Constants.FwDisplay + "' " +
                             "-Direction Inbound -Action Allow -Profile Any -Protocol TCP " +
                             "-LocalPort " + Constants.DefaultPort + " -RemoteAddress $subs | Out-Null }; 'DONE'";
                         var outp = HealthCheck.RunPs(script);
                         if (!outp.Contains("DONE")) throw new Exception("firewall script did not confirm");
-                        Logger.Log("fix: firewall rule set for " + subnets);
+                        Logger.Log("fix: firewall reset to exactly one rule for " + subnets);
                     }
                     else if (flag.StartsWith("install="))
                     {
