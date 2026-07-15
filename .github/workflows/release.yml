@@ -1,0 +1,90 @@
+# Builds RealmChat.exe and publishes a release on every push to main that
+# touches the app. This repo is public, so releases publish with the built-in
+# token - no secrets anywhere, and installed clients update tokenlessly via
+# releases/latest/download/.
+#
+# updaterVersion is the git tree hash of src/RealmChat: it changes exactly
+# when the app's source does, which is what triggers client self-updates.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "VERSION"
+      - ".github/workflows/release.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # tags needed for the version bump
+
+      - name: Version stamps
+        id: ver
+        shell: bash
+        run: |
+          echo "updater=$(git rev-parse HEAD:src/RealmChat | cut -c1-12)" >> "$GITHUB_OUTPUT"
+          base=$(tr -d '[:space:]' < VERSION)
+          IFS=. read -r MA MI PA <<< "$base"
+          tag="v${MA}.${MI}.${PA}"
+          while gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+                || git rev-parse "refs/tags/$tag" >/dev/null 2>&1; do
+            PA=$((PA + 1)); tag="v${MA}.${MI}.${PA}"
+          done
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${MA}.${MI}.${PA}" >> "$GITHUB_OUTPUT"
+          echo "resolved release: $tag (updater ${GITHUB_SHA::7})"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build RealmChat.exe (net48)
+        shell: bash
+        run: dotnet build src/RealmChat -c Release -o out "-p:UpdaterVersion=${{ steps.ver.outputs.updater }}"
+
+      - name: Manifest + checksums
+        shell: bash
+        run: |
+          cp out/RealmChat.exe .
+          jq -n --arg tag "${{ steps.ver.outputs.tag }}" \
+                --arg uv "${{ steps.ver.outputs.updater }}" \
+                '{tag: $tag, updaterVersion: $uv}' > manifest.json
+          sha256sum RealmChat.exe > SHA256SUMS
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          NOTES="WoW Realm Chat ${TAG}
+
+          First install: download RealmChat.exe, run it, follow the one-time setup.
+          It keeps itself up to date automatically from then on.
+
+          Integrity: \`sha256sum -c SHA256SUMS\` against the exe in this release."
+          gh release create "$TAG" RealmChat.exe SHA256SUMS manifest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "WoW Realm Chat ${TAG}" \
+            --notes "$NOTES"
+
+      - name: Bump VERSION
+        shell: bash
+        run: |
+          echo "${{ steps.ver.outputs.version }}" > VERSION
+          if git diff --quiet VERSION; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "Release ${{ steps.ver.outputs.tag }} [skip ci]"
+          git push origin HEAD:main

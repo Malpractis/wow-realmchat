@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>RealmChat</RootNamespace>
+    <AssemblyName>RealmChat</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <DebugType>none</DebugType>
+    <Product>WoW Realm Chat</Product>
+    <AssemblyTitle>WoW Realm Chat</AssemblyTitle>
+    <!-- Stamped by CI with the git tree hash of this directory, so the version
+         changes exactly when the source does (self-update trigger). Local
+         builds stay "dev", which disables self-update. -->
+    <UpdaterVersion Condition="'$(UpdaterVersion)' == ''">dev</UpdaterVersion>
+    <InformationalVersion>$(UpdaterVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Lets any machine with a .NET 8+ SDK build for net48 without the
+         Windows targeting pack installed. Build-time only, no runtime deps. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

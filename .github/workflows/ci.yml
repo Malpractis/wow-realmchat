@@ -1,0 +1,29 @@
+# Compile gate for PRs: the app must build with the same toolchain the
+# release workflow uses, and the test stub must stay compilable.
+name: ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build RealmChat.exe (net48)
+        shell: bash
+        run: dotnet build src/RealmChat -c Release -o out
+
+      - name: Compile the test stub
+        shell: pwsh
+        run: |
+          & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /out:out\ollama-stub.exe tools\OllamaStub\ollama-stub.cs
+          if (-not (Test-Path out\ollama-stub.exe)) { exit 1 }
