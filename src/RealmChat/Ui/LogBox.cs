@@ -49,9 +49,27 @@ namespace RealmChat
             set { placeholder.Text = value; }
         }
 
+        // The app runs for weeks in the tray; an unbounded log is a slow leak
+        // (and a chatty ollama error loop makes it a fast one). Keep the tail.
+        private const int MaxLines = 600;
+        private const int TrimLines = 200;
+        private int lineCount;
+
         public void Append(string line)
         {
             if (placeholder.Visible) placeholder.Visible = false;
+            if (++lineCount > MaxLines)
+            {
+                int cut = box.GetFirstCharIndexFromLine(TrimLines);
+                if (cut > 0)
+                {
+                    box.ReadOnly = false;
+                    box.Select(0, cut);
+                    box.SelectedText = "";
+                    box.ReadOnly = true;
+                }
+                lineCount -= TrimLines;
+            }
             box.SelectionStart = box.TextLength;
             box.SelectionColor = ColorFor(line);
             box.AppendText(line + Environment.NewLine);
