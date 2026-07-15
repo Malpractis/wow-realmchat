@@ -10,6 +10,10 @@
     <DebugType>none</DebugType>
     <Product>WoW Realm Chat</Product>
     <AssemblyTitle>WoW Realm Chat</AssemblyTitle>
+    <!-- Original art (generated in-repo, no external assets): the same
+         speech-bubble mark the app draws at runtime. Embedded too, for
+         Form.Icon via AppIcon. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <!-- Stamped by CI with the git tree hash of this directory, so the version
          changes exactly when the source does (self-update trigger). Local
          builds stay "dev", which disables self-update. -->
@@ -17,6 +21,10 @@
     <InformationalVersion>$(UpdaterVersion)</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="app.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="Microsoft.CSharp" />
