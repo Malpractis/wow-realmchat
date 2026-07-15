@@ -33,8 +33,12 @@ everything on the machine healthy and up to date by itself.
   file deletion — blobs are shared and refcounted).
 - **Self-updating**: a Scheduled Task checks daily and swaps in new versions
   silently (the update task never starts the chat — that stays a human
-  decision). Pinned model/version changes ship as app updates, so the host PC
-  never needs hands-on maintenance.
+  decision, with one opt-in exception below). Pinned model/version changes
+  ship as app updates, so the host PC never needs hands-on maintenance.
+- **Auto-resume (opt-in)**: a checkbox in setup makes the chat come back by
+  itself shortly after a reboot — but only when it was running before the
+  machine went down. Windows Update restarting the PC overnight no longer
+  silences the bots until someone notices. Deliberate stops stay stopped.
 
 ## Install (once)
 
@@ -54,11 +58,21 @@ the machine-local config (`%LOCALAPPDATA%\RealmChat\config.json`).
 ## How updates work
 
 Every release carries `RealmChat.exe`, `manifest.json`
-(`{tag, updaterVersion}`), and `SHA256SUMS`. Clients poll
-`releases/latest/download/manifest.json` (no API, no auth); `updaterVersion`
-is the git tree hash of `src/RealmChat`, so clients self-update exactly when
-the source changed. Downloads are verified against `SHA256SUMS` before the
-running exe is swapped (rename-aside + relaunch, with rollback).
+(`{tag, updaterVersion}`), `SHA256SUMS`, and `SHA256SUMS.sig`. Clients poll
+`releases/latest/download/` (no API, no auth); `updaterVersion` is the git
+tree hash of `src/RealmChat`, so clients self-update exactly when the source
+changed.
+
+Nothing is trusted unverified: `SHA256SUMS.sig` must be a valid RSA-SHA256
+signature over `SHA256SUMS` by the release key pinned inside the exe
+(`src/RealmChat/ReleaseKey.cs`, committed as `release-key.pub`), the manifest
+must hash-match its entry in those sums, and so must the downloaded exe
+before the running one is swapped (rename-aside + relaunch, with rollback).
+CI signs with the `SIGNING_KEY` repo secret and refuses to publish a release
+the committed public key wouldn't verify — so even a compromised repo or
+Actions token cannot feed installed clients a tampered build. Key rotation
+is two-phase: ship an exe trusting the new key first, sign with it only
+after the fleet updated.
 
 ## Options
 
@@ -69,6 +83,7 @@ it lives now:
 |---|---|
 | allowed firewall subnets | Settings (server subnet field; the PC's own LAN subnet is auto-derived) |
 | expected address check | Settings ("DNS name" — validated by lookup, no hardcoded IP) |
+| auto-resume after reboot | Settings checkbox (default off; resumes only a chat that was running) |
 | model storage folder | Settings (Browse; defaults to `C:\ProgramData\Ollama\models`) |
 | pinned Ollama version / model / keep-alive | `src/RealmChat/Constants.cs` — deliberately maintainer-only: a merge rolls the change to the host PC via self-update |
 | port | `config.json` `port` override only — deliberately hidden: the game server expects the default, changing it unilaterally silences the bots |
@@ -77,6 +92,10 @@ it lives now:
 
 - Build: `dotnet build src/RealmChat -c Release` (any .NET 8+ SDK; the net48
   reference assemblies restore via the project's `nuget.config`).
+- Tests: `dotnet build tools/Tests -c Release -o out-tests`, compile the stub
+  (`csc /out:out\ollama-stub.exe tools\OllamaStub\ollama-stub.cs`), then run
+  `out-tests\RealmChat.Tests.exe` — unit tests plus a full controller E2E
+  against the stub. CI runs the same suite on every PR and release.
 - `REALMCHAT_HOME=<dir>` makes the exe fully portable (config/log/install under
   that dir; no Scheduled Task or Start Menu writes).
 - `config.json` overrides for testing: `base_url` (any static server hosting
