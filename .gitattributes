@@ -1,0 +1,6 @@
+# Signature-sensitive bytes: never let line-ending normalization touch them.
+# The test fixtures are signed over their exact bytes, and the committed
+# public key must round-trip unchanged for the release workflow's verify.
+tools/Tests/fixtures/** -text
+*.sig -text
+*.pub text eol=lf

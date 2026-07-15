@@ -24,6 +24,8 @@ namespace RealmChat
                                                       // this PC (validated via system DNS)
         public bool tray_hint_shown { get; set; }
         public bool disable_firewall_watch { get; set; }   // watcher is ON by default
+        public bool auto_resume { get; set; }              // opt-in: restart the chat after a reboot
+        public bool chat_was_running { get; set; }         // persisted chat state driving auto-resume
 
         public string releases_repo { get; set; }     // overrides for dev/testing only
         public string base_url { get; set; }

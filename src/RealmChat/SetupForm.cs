@@ -15,6 +15,7 @@ namespace RealmChat
         private readonly TextBox subnetBox = new TextBox();
         private readonly TextBox dnsBox = new TextBox();
         private readonly TextBox modelsBox = new TextBox();
+        private readonly CheckBox resumeBox = new CheckBox { AutoSize = true };
 
         public SetupForm(AppConfig existing)
         {
@@ -25,7 +26,7 @@ namespace RealmChat
             MaximizeBox = false;
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(560, 372);
+            ClientSize = new Size(560, 404);
 
             var title = new Label { AutoSize = true, Location = new Point(16, 14), Text = "Realm Chat setup" };
             title.Font = new Font(Font.FontFamily, Font.Size * 1.35f, FontStyle.Bold);
@@ -77,19 +78,23 @@ namespace RealmChat
                 }
             };
 
-            var ok = new ThemedButton { Text = "Save", Primary = true, Location = new Point(348, 322), Size = new Size(96, 30) };
+            resumeBox.Location = new Point(16, 296);
+            resumeBox.Text = "Start the chat again after a reboot (only when it was running before)";
+            resumeBox.Checked = Result.auto_resume;
+
+            var ok = new ThemedButton { Text = "Save", Primary = true, Location = new Point(348, 354), Size = new Size(96, 30) };
             ok.Click += OnOk;
             var cancel = new ThemedButton
             {
                 Text = "Cancel",
-                Location = new Point(452, 322),
+                Location = new Point(452, 354),
                 Size = new Size(92, 30),
                 DialogResult = DialogResult.Cancel,
             };
 
             Controls.AddRange(new Control[] { title, intro, capLocal, valLocal,
                 capSubnet, subnetBox, capDns, dnsBox,
-                capModels, modelsBox, browseModels, ok, cancel });
+                capModels, modelsBox, browseModels, resumeBox, ok, cancel });
             AcceptButton = ok;
             CancelButton = cancel;
         }
@@ -131,6 +136,7 @@ namespace RealmChat
             }
             Result.server_subnets = string.Join(",", subnets.ToArray());
             Result.dns_name = (dnsBox.Text ?? "").Trim();
+            Result.auto_resume = resumeBox.Checked;
             Result.setup_done = true;
             DialogResult = DialogResult.OK;
             Close();

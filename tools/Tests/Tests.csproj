@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Zero-dependency test runner in the repo's own style: compiles the app
+       sources in (same toolchain, same net48 target) and runs plain assert
+       methods from a console Main - no test framework to restore or trust.
+       Lives under tools/ so test-only changes never touch the updaterVersion
+       tree hash of src/RealmChat (which would trigger client self-updates). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>RealmChat.Tests</RootNamespace>
+    <AssemblyName>RealmChat.Tests</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <DebugType>none</DebugType>
+    <!-- The app sources define RealmChat.Program.Main; ours is the entry. -->
+    <StartupObject>RealmChat.Tests.TestProgram</StartupObject>
+    <!-- Deliberately NOT "dev": Program.Version drives the signature-skip in
+         SelfUpdater.Fetch, and the tests must exercise the verifying path
+         (the fixtures are signed by the real release key). -->
+    <InformationalVersion>test</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../src/RealmChat/**/*.cs" Exclude="../../src/RealmChat/obj/**" />
+    <EmbeddedResource Include="../../src/RealmChat/app.ico" LogicalName="RealmChat.app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>
