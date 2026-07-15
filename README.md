@@ -99,6 +99,10 @@ it lives now:
 - `REALMCHAT_HOME=<dir>` makes the exe fully portable (config/log/install under
   that dir; no Scheduled Task or Start Menu writes).
 - `config.json` overrides for testing: `base_url` (any static server hosting
-  the three release assets), `ollama_exe` (e.g. the stub in
+  the release assets), `ollama_exe` (e.g. the stub in
   `tools/OllamaStub`), `port`, `models_dir`.
 - `--silent` is what the Scheduled Task runs; `--configure` re-runs setup.
+- Deeper docs: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (system/
+  components/data flow/interfaces) and
+  [`docs/CI-CD-WORKFLOW.md`](docs/CI-CD-WORKFLOW.md) — read the latter
+  before your first merge: **merging to main is deploying**.
