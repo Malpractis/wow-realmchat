@@ -5,7 +5,11 @@
 //                 %LOCALAPPDATA%\RealmChat and registers a Scheduled Task
 //                 (login + daily) for silent self-updates; then the window.
 //   --silent      what the Scheduled Task runs: self-update quietly, toast on
-//                 change or persistent failure, exit. Never touches the chat.
+//                 change or persistent failure, exit. Never starts the chat
+//                 itself, but shortly after boot it may relaunch the GUI with
+//                 --resume when the opt-in auto-resume setting applies.
+//   --resume      internal: GUI start that goes straight to the tray and
+//                 starts the chat (auto-resume after a reboot).
 //   --fix <a,b>   internal: elevated self-invocation applying admin fixes.
 //   --configure   re-run setup; --postupdate internal flag after self-update.
 using System;
@@ -58,6 +62,7 @@ namespace RealmChat
         }
 
         private static Action pendingToast;
+        private static bool pendingResume;   // launch the GUI with --resume after the mutex frees
 
         [STAThread]
         private static int Main(string[] args)
@@ -65,6 +70,7 @@ namespace RealmChat
             bool silent = args.Contains("--silent");
             bool configure = args.Contains("--configure");
             bool postUpdate = args.Contains("--postupdate");
+            bool resume = args.Contains("--resume");
 
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
 
@@ -89,20 +95,22 @@ namespace RealmChat
                 else MessageBox.Show("Realm Chat is already running - look for its tray icon.", "Realm Chat");
                 return 0;
             }
-            try { return Run(silent, configure, postUpdate); }
+            try { return Run(silent, configure, postUpdate, resume); }
             finally
             {
                 mutex.ReleaseMutex();
                 mutex.Dispose();
-                // Toast AFTER releasing the single-instance lock: the balloon
-                // pumps a message loop for several seconds and must not block
-                // the next scheduled run meanwhile.
+                // AFTER releasing the single-instance lock: the resumed GUI
+                // needs the mutex, and the toast balloon pumps a message loop
+                // for several seconds and must not block the next scheduled
+                // run meanwhile.
+                if (pendingResume) Process.Start(InstalledExe, "--resume");
                 var t = pendingToast;
                 if (t != null) t();
             }
         }
 
-        private static int Run(bool silent, bool configure, bool postUpdate)
+        private static int Run(bool silent, bool configure, bool postUpdate, bool resume)
         {
             Directory.CreateDirectory(InstallDir);
             if (postUpdate) CleanupOldExe();
@@ -125,6 +133,7 @@ namespace RealmChat
 
             if (cfg == null || configure || !cfg.setup_done)
             {
+                if (resume) return 1;   // resume can't walk through setup
                 using (var setup = new SetupForm(cfg))
                 {
                     if (setup.ShowDialog() != DialogResult.OK) return 0;
@@ -134,8 +143,17 @@ namespace RealmChat
             }
 
             InstallSelf();
-            Application.Run(new MainForm(cfg));
+            Application.Run(new MainForm(cfg, resume));
             return 0;
+        }
+
+        // Opt-in auto-resume: the chat was running when the machine went down,
+        // so the first silent run after boot brings it back. The uptime window
+        // keeps the daily-noon check from ever starting the chat by itself.
+        internal static bool ShouldAutoResume(AppConfig cfg, uint uptimeMs)
+        {
+            return cfg.auto_resume && cfg.chat_was_running &&
+                   uptimeMs < 15u * 60 * 1000;
         }
 
         private static int SilentRun(AppConfig cfg, bool postUpdate)
@@ -143,14 +161,16 @@ namespace RealmChat
             Logger.Log("--- silent update check (" + Version + ") ---");
             try
             {
-                // The scheduled task ONLY updates the app; starting/stopping
-                // the chat stays a human decision in the GUI.
+                // The scheduled task itself only updates the app; the chat
+                // comes back solely via the opt-in auto-resume below.
                 bool relaunch = !postUpdate && new SelfUpdater(cfg, Logger.Log).Run();
                 if (relaunch)
                 {
+                    // The post-update run makes the resume decision instead.
                     Process.Start(InstalledExe, "--silent --postupdate");
                     return 0;
                 }
+                MaybeResume(cfg);
                 cfg.consecutive_failures = 0;
                 cfg.last_success_utc = DateTime.UtcNow.ToString("o");
                 cfg.last_check_utc = cfg.last_success_utc;
@@ -164,6 +184,7 @@ namespace RealmChat
             catch (Exception ex)
             {
                 Logger.Log("FAILED: " + ex.Message);
+                MaybeResume(cfg);   // no network at boot must not block the resume
                 cfg.consecutive_failures++;
                 cfg.last_check_utc = DateTime.UtcNow.ToString("o");
                 cfg.last_result = "failed: " + ex.Message;
@@ -178,6 +199,13 @@ namespace RealmChat
                 cfg.Save();
                 return 1;
             }
+        }
+
+        private static void MaybeResume(AppConfig cfg)
+        {
+            if (!ShouldAutoResume(cfg, (uint)Environment.TickCount)) return;
+            Logger.Log("auto-resume: the chat was running before the reboot - reopening");
+            pendingResume = true;
         }
 
         // Copy self to the stable location and register the update task +

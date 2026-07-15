@@ -44,6 +44,7 @@ namespace RealmChat.Tests
                 ReleaseKeyTests(fixtures);
                 SubnetTests();
                 AppConfigTests();
+                AutoResumeTests();
                 ScheduledTaskXmlTests();
                 UpdaterFetchTests(fixtures);
                 StubE2ETests(stub);
@@ -173,6 +174,19 @@ namespace RealmChat.Tests
             Check(cfg.GetOldModelsDirs().Count == 1, "old model dirs dedupe case-insensitively");
             cfg.RemoveOldModelsDir(@"C:\a");
             Check(cfg.GetOldModelsDirs().Count == 0, "old model dir removal");
+        }
+
+        private static void AutoResumeTests()
+        {
+            Console.WriteLine("Program.ShouldAutoResume:");
+            const uint min = 60 * 1000;
+            var cfg = new AppConfig { auto_resume = true, chat_was_running = true };
+            Check(Program.ShouldAutoResume(cfg, 2 * min), "resumes shortly after boot");
+            Check(!Program.ShouldAutoResume(cfg, 16 * min), "daily check outside the boot window never resumes");
+            Check(!Program.ShouldAutoResume(new AppConfig { chat_was_running = true }, 2 * min),
+                  "opt-out (default) never resumes");
+            Check(!Program.ShouldAutoResume(new AppConfig { auto_resume = true }, 2 * min),
+                  "chat that was stopped stays stopped");
         }
 
         private static void ScheduledTaskXmlTests()

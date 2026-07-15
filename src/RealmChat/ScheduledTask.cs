@@ -7,8 +7,8 @@ using System.Text;
 namespace RealmChat
 {
     // Registers the silent self-update check via schtasks /XML (two triggers
-    // need XML, not flags). The task only updates the app - it never starts
-    // the chat; that stays a human decision.
+    // need XML, not flags). The task only updates the app; starting the chat
+    // stays a human decision, except the opt-in auto-resume after a reboot.
     public static class ScheduledTask
     {
         public static void EnsureRegistered()
@@ -56,7 +56,7 @@ namespace RealmChat
 "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n" +
 "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\r\n" +
 "  <RegistrationInfo>\r\n" +
-"    <Description>Keeps the WoW Realm Chat app up to date (never starts the chat itself).</Description>\r\n" +
+"    <Description>Keeps the WoW Realm Chat app up to date (starts the chat only for the opt-in auto-resume after a reboot).</Description>\r\n" +
 "  </RegistrationInfo>\r\n" +
 "  <Triggers>\r\n" +
 "    <LogonTrigger>\r\n" +

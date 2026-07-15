@@ -45,15 +45,17 @@ namespace RealmChat
         private List<HealthItem> health = new List<HealthItem>();
         private bool busy;
         private bool exiting;
+        private bool resuming;         // --resume launch: start in the tray, start the chat
         private List<CleanupItem> cleanupItems = new List<CleanupItem>();
         private int pollTicks;
         private bool fwAlerted;        // one toast per firewall incident
         private bool fwCheckRunning;
         private DateTime? fwPostStart; // schedules the just-after-start check
 
-        public MainForm(AppConfig cfg)
+        public MainForm(AppConfig cfg, bool resume)
         {
             this.cfg = cfg;
+            resuming = resume;
             ollama = new OllamaController(cfg, Say);
             ollama.ServerExited += OnServerExited;
 
@@ -222,7 +224,9 @@ namespace RealmChat
             };
             poll.Start();
 
-            Shown += delegate { OnOpened(); };
+            // A resume launch lives in the tray from the first moment: nobody
+            // is at the keyboard right after a reboot.
+            Shown += delegate { if (resuming) Hide(); OnOpened(); };
             FormClosing += OnClosingForm;
 
             // The firewall enumeration can take many seconds on rule-heavy
@@ -262,6 +266,16 @@ namespace RealmChat
         private void SetState(ChatState s)
         {
             state = s;
+            // Persist the running state for auto-resume. Ready/Stopped are the
+            // truth; Crashed deliberately keeps the last value, so a machine
+            // that goes down with a crashed-but-wanted chat still resumes.
+            bool? wasRunning = s == ChatState.Ready ? true
+                             : s == ChatState.Stopped ? (bool?)false : null;
+            if (wasRunning.HasValue && cfg.chat_was_running != wasRunning.Value)
+            {
+                cfg.chat_was_running = wasRunning.Value;
+                cfg.Save();
+            }
             switch (s)
             {
                 case ChatState.Stopped:
@@ -345,13 +359,25 @@ namespace RealmChat
                         Say("An Ollama server is already running — taking it over.");
                         SetState(loaded ? ChatState.Ready : ChatState.Warming);
                         if (!loaded) WarmAsync();
+                        busy = false;
+                        bar.Active = false;
+                    }
+                    else if (resuming)
+                    {
+                        Say("Resuming the chat after the reboot (auto-resume is on).");
+                        tray.ShowBalloonTip(8000, "Realm Chat",
+                            "Starting the chat again after the reboot — right-click the tray icon to stop it.",
+                            ToolTipIcon.Info);
+                        busy = false;
+                        bar.Active = false;
+                        StartChat();
                     }
                     else
                     {
                         SetState(ChatState.Stopped);
+                        busy = false;
+                        bar.Active = false;
                     }
-                    busy = false;
-                    bar.Active = false;
                 }));
             });
         }
@@ -683,6 +709,8 @@ namespace RealmChat
             {
                 Say("Exiting — stopping the chat.");
                 try { ollama.Stop(); } catch { }
+                // A deliberate exit is a deliberate stop: don't auto-resume it.
+                if (cfg.chat_was_running) { cfg.chat_was_running = false; cfg.Save(); }
             }
             poll.Stop();
             tray.Visible = false;
