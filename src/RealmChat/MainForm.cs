@@ -49,6 +49,7 @@ namespace RealmChat
         private int pollTicks;
         private bool fwAlerted;        // one toast per firewall incident
         private bool fwCheckRunning;
+        private bool reconcileRunning; // one probe in flight at a time
         private DateTime? fwPostStart; // schedules the just-after-start check
 
         public MainForm(AppConfig cfg)
@@ -624,7 +625,8 @@ namespace RealmChat
         // servers stopping, or someone starting Ollama outside the app).
         private void ReconcileState()
         {
-            if (busy) return;
+            if (busy || reconcileRunning) return;
+            reconcileRunning = true;
             Task.Run(delegate
             {
                 bool up = ollama.IsUp();
@@ -632,6 +634,7 @@ namespace RealmChat
                 {
                     BeginInvoke((Action)(delegate
                     {
+                        reconcileRunning = false;
                         if (busy) return;
                         if (up && state == ChatState.Stopped)
                         {
@@ -646,7 +649,7 @@ namespace RealmChat
                         }
                     }));
                 }
-                catch { }
+                catch { reconcileRunning = false; }
             });
         }
 
